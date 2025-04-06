@@ -1,5 +1,6 @@
+require('dotenv').config();
 const express = require('express');
-const mysql = require('mysql2');
+const mongoose = require('mongoose');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
@@ -8,74 +9,86 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-const db = mysql.createConnection({
-  host: 'localhost',
-  user: 'root',
-  password: '',
-  database: 'blog_app',
-});
+// MongoDB Connection
+mongoose.connect(process.env.MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+})
+  .then(() => console.log('Connected to MongoDB'))
+  .catch((err) => console.error('MongoDB connection error:', err));
 
-db.connect((err) => {
-  if (err) throw err;
-  console.log('Connected to MySQL');
-});
 
-// Signup Route (New)
-app.post('/signup', (req, res) => {
+// User Schema
+const userSchema = new mongoose.Schema({
+  email: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+});
+const User = mongoose.model('User', userSchema);
+
+// Blog Schema
+const blogSchema = new mongoose.Schema({
+  title: { type: String, required: true },
+  content: { type: String, required: true },
+  user_email: { type: String, required: true },
+  created_at: { type: Date, default: Date.now },
+});
+const Blog = mongoose.model('Blog', blogSchema);
+
+// Signup Route
+app.post('/signup', async (req, res) => {
   const { email, password } = req.body;
-  // Check if user already exists
-  db.query('SELECT * FROM users WHERE email = ?', [email], (err, result) => {
-    if (err) throw err;
-    if (result.length > 0) return res.status(400).json({ msg: 'Email already exists' });
+  try {
+    const existingUser = await User.findOne({ email });
+    if (existingUser) return res.status(400).json({ msg: 'Email already exists' });
 
-    // Insert new user (plain text password for simplicity)
-    db.query(
-      'INSERT INTO users (email, password) VALUES (?, ?)',
-      [email, password],
-      (err, result) => {
-        if (err) throw err;
-        res.json({ msg: 'Sign up successful! Please log in.' });
-      }
-    );
-  });
+    const newUser = new User({ email, password }); // Plain text password for simplicity
+    await newUser.save();
+    res.json({ msg: 'Sign up successful! Please log in.' });
+  } catch (err) {
+    res.status(500).json({ msg: 'Server error' });
+  }
 });
 
 // Login Route
-app.post('/login', (req, res) => {
+app.post('/login', async (req, res) => {
   const { email, password } = req.body;
-  db.query('SELECT * FROM users WHERE email = ?', [email], (err, result) => {
-    if (err) throw err;
-    if (result.length === 0) return res.status(400).json({ msg: 'User not found' });
+  try {
+    const user = await User.findOne({ email });
+    if (!user) return res.status(400).json({ msg: 'User not found' });
 
-    const user = result[0];
     if (password !== user.password) return res.status(400).json({ msg: 'Invalid password' });
 
     const token = jwt.sign({ email: user.email }, 'secret_key', { expiresIn: '1h' });
     res.json({ token });
-  });
+  } catch (err) {
+    res.status(500).json({ msg: 'Server error' });
+  }
 });
 
 // Create Blog
-app.post('/blogs', (req, res) => {
+app.post('/blogs', async (req, res) => {
   const { title, content, user_email } = req.body;
-  db.query(
-    'INSERT INTO blogs (title, content, user_email) VALUES (?, ?, ?)',
-    [title, content, user_email],
-    (err, result) => {
-      if (err) throw err;
-      res.json({ msg: 'Blog posted successfully' });
-    }
-  );
+  try {
+    const newBlog = new Blog({ title, content, user_email });
+    await newBlog.save();
+    res.json({ msg: 'Blog posted successfully' });
+  } catch (err) {
+    res.status(500).json({ msg: 'Server error' });
+  }
 });
 
 // Get All Blogs
-app.get('/blogs', (req, res) => {
-  db.query('SELECT * FROM blogs ORDER BY created_at DESC', (err, result) => {
-    if (err) throw err;
-    res.json(result);
-  });
+app.get('/blogs', async (req, res) => {
+  try {
+    const blogs = await Blog.find().sort({ created_at: -1 });
+    res.json(blogs);
+  } catch (err) {
+    res.status(500).json({ msg: 'Server error' });
+  }
 });
 
-app.listen(5000, () => {
-  console.log('Server running on port 5000');
-});
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+
+module.exports = app;
